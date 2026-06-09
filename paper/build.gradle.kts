@@ -27,8 +27,11 @@ dependencies {
     compileOnly("io.github.toxicity188:bettermodel-api:2.2.0")
     compileOnly("io.github.toxicity188:bettermodel-bukkit-api:2.2.0")
     
-    compileOnly(files("libs/geyserutils-spigot-1.0-SNAPSHOT.jar"))
+    compileOnly("me.zimzaza4:geyserutils-spigot:1.0-SNAPSHOT")
     compileOnly("org.geysermc.floodgate:api:2.2.4-SNAPSHOT")
+
+    compileOnly("org.projectlombok:lombok:1.18.32")
+    annotationProcessor("org.projectlombok:lombok:1.18.32")
 
     implementation("com.github.retrooper:packetevents-spigot:2.12.1")
     implementation("org.bstats:bstats-bukkit:3.0.2")

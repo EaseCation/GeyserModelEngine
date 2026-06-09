@@ -15,9 +15,12 @@ repositories {
 }
 
 dependencies {
-    compileOnly("org.geysermc.geyser:api:2.9.0-SNAPSHOT")
+    compileOnly("org.geysermc.geyser:api:2.9.2-SNAPSHOT")
 
-    compileOnly(files("libs/geyserutils-geyser-1.0-SNAPSHOT.jar"))
+    compileOnly("me.zimzaza4:geyserutils-geyser:1.0-SNAPSHOT")
+
+    compileOnly("org.projectlombok:lombok:1.18.32")
+    annotationProcessor("org.projectlombok:lombok:1.18.32")
 
     implementation("org.spongepowered:configurate-yaml:4.2.0-GeyserMC-SNAPSHOT")
     implementation("com.google.code.gson:gson:2.13.1")
