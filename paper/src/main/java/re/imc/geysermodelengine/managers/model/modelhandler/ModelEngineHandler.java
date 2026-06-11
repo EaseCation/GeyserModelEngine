@@ -46,6 +46,17 @@ public class ModelEngineHandler implements ModelHandler {
         // 即会命中此路径，故先判重、确认不是重复后再构造。
         for (Model existing : entityDataCache.keySet()) {
             if (existing.getName().equals(blueprintName)) {
+                ModelEngineModel existingModel = (ModelEngineModel) existing;
+                if (existingModel.getActiveModel() == megActiveModel) {
+                    return; // 同一 ActiveModel 实例的重复事件，忽略
+                }
+                // 不同实例：同一 base 实体重复挂载（ModelEngine 为它创建了新的 ModeledEntity/ActiveModel，
+                // 旧实例随后会被销毁）。把缓存的 Model/EntityData 刷新指向最新的活实例，复用同一 PacketEntity 与
+                // 定时任务，避免 GeyserModelEngine 一直跟踪旧的（已销毁/静止）实例导致基岩端动画同步不到。
+                ModelEngineEntityData existingData = (ModelEngineEntityData) entityDataCache.get(existing);
+                existingModel.setActiveModel(megActiveModel);
+                if (existingData != null) existingData.updateModel(megEntity, megActiveModel);
+                if (plugin.getConfigManager().getConfig().getBoolean("options.debug.spawn")) plugin.getLogger().info("Refreshed " + blueprintName + " to latest ActiveModel instance");
                 return;
             }
         }

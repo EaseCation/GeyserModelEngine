@@ -19,8 +19,8 @@ public class ModelEngineEntityData implements EntityData {
     private final PacketEntity entity;
     private final Set<Player> viewers = Sets.newConcurrentHashSet();
 
-    private final ModeledEntity modeledEntity;
-    private final ActiveModel activeModel;
+    private ModeledEntity modeledEntity;
+    private ActiveModel activeModel;
 
     private ModelEngineTaskHandler entityTask;
 
@@ -44,6 +44,15 @@ public class ModelEngineEntityData implements EntityData {
 
     public void runEntityTask() {
         entityTask = new ModelEngineTaskHandler(plugin, this);
+    }
+
+    /**
+     * 同一 base 实体被重复挂载同名蓝图、但产生了新的 ModeledEntity/ActiveModel 实例时，
+     * 把本数据刷新指向最新的活实例（复用同一 PacketEntity 与定时任务，避免新增/闪烁基岩实体）。
+     */
+    public void updateModel(ModeledEntity modeledEntity, ActiveModel activeModel) {
+        this.modeledEntity = modeledEntity;
+        this.activeModel = activeModel;
     }
 
     @Override

@@ -7,7 +7,7 @@ import re.imc.geysermodelengine.managers.model.propertyhandler.PropertyHandler;
 
 public class ModelEngineModel implements Model {
 
-    private final ActiveModel activeModel;
+    private ActiveModel activeModel;
     private final ModelHandler modelHandler;
     private final EntityData entityData;
     private final PropertyHandler propertyHandler;
@@ -41,5 +41,9 @@ public class ModelEngineModel implements Model {
 
     public ActiveModel getActiveModel() {
         return activeModel;
+    }
+
+    public void setActiveModel(ActiveModel activeModel) {
+        this.activeModel = activeModel;
     }
 }
