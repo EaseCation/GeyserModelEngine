@@ -107,11 +107,18 @@ public class ResourcePackManager {
             }
         }
 
+        boolean lockHeadToBody = extension.getConfigManager().getConfig().getBoolean("models.lock-head-to-body", true);
+
         for (Map.Entry<String, Animation> entry : animationCache.entrySet()) {
             Entity entity = entityCache.get(entry.getKey());
             Geometry geo = geometryCache.get(entry.getKey());
 
-            if (geo != null) entry.getValue().addHeadBind(geo);
+            if (geo != null) {
+                entry.getValue().addHeadBind(geo);
+                entry.getValue().bakeAncestorScaleToEscapeBones(geo);   // 方案A：给逃逸头骨下烤 reaches-zero 祖先 scale（根治「留头」）
+                if (lockHeadToBody) entry.getValue().neutralizeHeadRotation(geo);   // 通用锁头：压平逃逸头骨 rotation → head=body（复刻 Java maxhead=0）
+            }
+            entry.getValue().floorZeroScalesToEpsilon();   // 隐身用 ε 而非精确 0，防 Bedrock 冻结零尺寸实体导致本体永不现身（独立于 geo）
 
             Path path = animationsFolder.toPath().resolve(entry.getValue().getPath() + entry.getKey() + ".json");
             Path pathController = animationControllersFolder.toPath().resolve(entry.getValue().getPath() + entry.getKey() + ".json");

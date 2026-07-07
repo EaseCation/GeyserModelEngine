@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import me.zimzaza4.geyserutils.geyser.GeyserUtils;
+import re.imc.geysermodelengineextension.GeyserModelEngineExtension;
 import re.imc.geysermodelengineextension.managers.resourcepack.generator.data.TextureData;
 import re.imc.geysermodelengineextension.util.ShortHashUtil;
 
@@ -39,11 +40,9 @@ public class Entity {
             
                   },
                   "animations": {
-                    "look_at_target": "%look_at_target%"
                   },
                   "scripts": {
                     "animate": [
-                      "look_at_target"
                     ]
                   },
                   "render_controllers": [
@@ -66,7 +65,6 @@ public class Entity {
                 .replace("%entity_id%", modelId)
                 .replace("%geometry%", geometryId)
                 .replace("%texture%", defaultTexturePath)
-                .replace("%look_at_target%", (modelConfig.isEnableHeadRotation() && hasHeadAnimation) ? "animation." + modelId + ".look_at_target" : "animation.common.look_at_target")
                 .replace("%material%", modelConfig.getMaterial())).getAsJsonObject();
 
         JsonObject description = json.get("minecraft:client_entity").getAsJsonObject().get("description").getAsJsonObject();
@@ -112,6 +110,17 @@ public class Entity {
         }
 
         JsonArray animate = description.get("scripts").getAsJsonObject().get("animate").getAsJsonArray();
+
+        // 通用锁头：默认不注入 look_at_target（去掉唯一的头部追踪源，head 骨随 body → 复刻 Java maxhead=0）。
+        // 仅当全局关闭锁头（lock-head-to-body:false）时恢复原行为，注入 common/模型专属 look_at_target。
+        boolean lockHeadToBody = GeyserModelEngineExtension.getExtension().getConfigManager()
+                .getConfig().getBoolean("models.lock-head-to-body", true);
+        if (!lockHeadToBody) {
+            String lookAtTarget = (modelConfig.isEnableHeadRotation() && hasHeadAnimation)
+                    ? "animation." + modelId + ".look_at_target" : "animation.common.look_at_target";
+            jsonAnimations.addProperty("look_at_target", lookAtTarget);
+            animate.add("look_at_target");
+        }
 
         if (animation != null) {
             for (String animation : animation.getAnimationIds()) {

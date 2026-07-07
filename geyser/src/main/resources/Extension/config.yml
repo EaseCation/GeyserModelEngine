@@ -1,5 +1,9 @@
 models:
   namespace: "modelengine"
+  # 锁头贴身：生成资源包时压平 head/h_/hi_ 骨的 rotation 通道并不注入 look_at_target，
+  # 使基岩端 head 骨随身体（复刻 Java ModelEngine BodyRotation{maxhead=0}）。默认开启、对所有模型自动生效。
+  # 置 false 恢复旧行为（客户端 look_at_target 自行转头，会与身体呈固定夹角，仅在确需头独立追踪时使用）。
+  lock-head-to-body: true
 
 options:
   debug:
