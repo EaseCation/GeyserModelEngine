@@ -8,10 +8,6 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import re.imc.geysermodelengine.GeyserModelEngine;
-import re.imc.geysermodelengine.managers.model.entity.EntityData;
-import re.imc.geysermodelengine.managers.model.model.Model;
-
-import java.util.Map;
 
 public class ModelEngineListener implements Listener {
 
@@ -36,14 +32,10 @@ public class ModelEngineListener implements Listener {
 
         int entityID = activeModel.getModeledEntity().getBase().getEntityId();
 
-        Map<Model, EntityData> entityDataCache = plugin.getModelManager().getEntitiesCache().get(entityID);
-        if (entityDataCache == null) return;
+        // 单一权威缓存：仅当该 base 实体确有被跟踪的载体时，才把驾驶员登记入 driversCache
+        if (!plugin.getModelManager().getEntities().containsKey(entityID)) return;
 
-        Model model = plugin.getModelManager().getModelEntitiesCache().get(entityID);
-
-        EntityData entityData = entityDataCache.get(model);
-
-        if (entityData != null && event.getPassenger() instanceof Player player) {
+        if (event.getPassenger() instanceof Player player) {
             plugin.getModelManager().getDriversCache().put(player.getUniqueId(), Pair.of(event.getVehicle(), event.getSeat()));
         }
     }

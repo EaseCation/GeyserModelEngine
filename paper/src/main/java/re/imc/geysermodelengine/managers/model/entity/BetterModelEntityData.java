@@ -26,8 +26,9 @@ public class BetterModelEntityData implements EntityData {
     private final PacketEntity entity;
     private final Set<Player> viewers = Sets.newConcurrentHashSet();
 
-    private final BaseEntity entitySource;
-    private final EntityTracker entityTracker;
+    // 非 final：同一 base 实体被重复挂载同名蓝图、产生新 tracker 实例时刷新复用同一载体（见 updateTracker）
+    private BaseEntity entitySource;
+    private EntityTracker entityTracker;
     // TODO DummyTracker support
 
     private BetterModelTaskHandler entityTask;
@@ -56,6 +57,16 @@ public class BetterModelEntityData implements EntityData {
 
     public void runEntityTask() {
         entityTask = new BetterModelTaskHandler(plugin, this);
+        entityTask.start(); // 先赋值 entityTask 再启动，关闭构造期 getEntityTask()==null 竞态
+    }
+
+    /**
+     * 同一 base 实体被重复挂载同名蓝图、但产生了新的 BaseEntity/EntityTracker 实例时，
+     * 把本数据刷新指向最新的活实例（复用同一 PacketEntity 与定时任务，避免新增/闪烁基岩实体）。
+     */
+    public void updateTracker(BaseEntity entitySource, EntityTracker entityTracker) {
+        this.entitySource = entitySource;
+        this.entityTracker = entityTracker;
     }
 
     @Override
@@ -92,5 +103,20 @@ public class BetterModelEntityData implements EntityData {
 
     public boolean isHurt() {
         return hurt;
+    }
+
+    @Override
+    public int getBaseEntityId() {
+        return entitySource.id();
+    }
+
+    @Override
+    public String getBlueprintName() {
+        return entityTracker.name();
+    }
+
+    @Override
+    public boolean isModelDead() {
+        return entitySource.dead() || entityTracker.forRemoval();
     }
 }

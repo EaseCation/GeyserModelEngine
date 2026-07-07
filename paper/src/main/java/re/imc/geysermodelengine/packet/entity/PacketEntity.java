@@ -18,11 +18,16 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Collection;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Getter
 @Setter
 public class PacketEntity {
+
+    // H6：进程内单调 id 分配器，取代 ThreadLocalRandom.nextInt(3e8,4e8) 的随机 id。
+    // 随机方案存在生日悖论互撞（n≈1000 时 ~0.5%），共享 id 会连带误销毁另一载体。
+    // 必须锁定在 [3e8, 4e8) 区间：粒子桥([[geyser-bound-particle-defer-flush]])凭 javaId 落此区间识别 GME 载体。
+    private static final AtomicInteger ID_ALLOCATOR = new AtomicInteger(300_000_000);
 
     private int id;
     private UUID uuid;
@@ -35,7 +40,7 @@ public class PacketEntity {
     private boolean removed = false;
 
     public PacketEntity(EntityType type, Set<Player> viewers, Location location) {
-        this.id = ThreadLocalRandom.current().nextInt(300000000, 400000000);
+        this.id = ID_ALLOCATOR.getAndUpdate(v -> v >= 399_999_999 ? 300_000_000 : v + 1);
         this.uuid = UUID.randomUUID();
         this.type = type;
         this.viewers = viewers;

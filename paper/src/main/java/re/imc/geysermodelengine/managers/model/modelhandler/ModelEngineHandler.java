@@ -9,13 +9,9 @@ import re.imc.geysermodelengine.GeyserModelEngine;
 import re.imc.geysermodelengine.listener.ModelEngineListener;
 import re.imc.geysermodelengine.managers.model.entity.EntityData;
 import re.imc.geysermodelengine.managers.model.entity.ModelEngineEntityData;
-import re.imc.geysermodelengine.managers.model.model.Model;
-import re.imc.geysermodelengine.managers.model.model.ModelEngineModel;
-import re.imc.geysermodelengine.managers.model.propertyhandler.PropertyHandler;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ModelEngineHandler implements ModelHandler {
 
@@ -35,45 +31,31 @@ public class ModelEngineHandler implements ModelHandler {
         int entityID = megEntity.getBase().getEntityId();
         String blueprintName = megActiveModel.getBlueprint().getName();
 
-        Map<Model, EntityData> entityDataCache = plugin.getModelManager().getEntitiesCache().computeIfAbsent(entityID, k -> new HashMap<>());
-
-        // 去重必须在构造 EntityData 之前。ModelEngineEntityData 的构造函数会立刻启动 ModelEngineTaskHandler
-        // （20ms 定时任务 + 一个随机 ID 的 PacketEntity，开始向基岩端发生成包）。若先构造、再因重复而 return，
-        // 这个被丢弃的 EntityData 不会进入 entitiesCache，但它的任务仍永久运行——向基岩端发出一个不在缓存里的
-        // 「孤儿」发包实体；而动画属性只由 UpdateTaskRunnable 遍历 entitiesCache 下发，孤儿收不到 → 基岩端表现为
-        // 第二个「贴了模型却不播放动画」的克隆体（Java 端不受影响，PacketEntity 仅发给基岩玩家）。
-        // 同一实体被重复挂载同名蓝图时（如 Adyeshach refreshModelEngine + 逐玩家可见性 show 触发多次 AddModelEvent）
-        // 即会命中此路径，故先判重、确认不是重复后再构造。
-        for (Model existing : entityDataCache.keySet()) {
-            if (existing.getName().equals(blueprintName)) {
-                ModelEngineModel existingModel = (ModelEngineModel) existing;
-                if (existingModel.getActiveModel() == megActiveModel) {
-                    return; // 同一 ActiveModel 实例的重复事件，忽略
-                }
-                // 不同实例：同一 base 实体重复挂载（ModelEngine 为它创建了新的 ModeledEntity/ActiveModel，
-                // 旧实例随后会被销毁）。把缓存的 Model/EntityData 刷新指向最新的活实例，复用同一 PacketEntity 与
-                // 定时任务，避免 GeyserModelEngine 一直跟踪旧的（已销毁/静止）实例导致基岩端动画同步不到。
-                ModelEngineEntityData existingData = (ModelEngineEntityData) entityDataCache.get(existing);
-                existingModel.setActiveModel(megActiveModel);
-                if (existingData != null) existingData.updateModel(megEntity, megActiveModel);
+        // 核心①：判重 → 刷新/构造 全程在 entities.compute(entityID,…) 内，按 base 实体串行（CHM 每键 bin 锁）。
+        // 结构上幂等：同 (entityID, blueprintName) 至多一条 EntityData。~onSpawn/~onLoad 的并发双挂载
+        // 第二次落入 refresh 分支复用同一载体，绝不再造第二只孤儿（傀儡+留头本因）。构造只发生在确定要插入的
+        // else 分支内，避免「先构造启动任务、再因重复丢弃」造成的孤儿发包任务泄漏。
+        plugin.getModelManager().getEntities().compute(entityID, (id, bucket) -> {
+            if (bucket == null) bucket = new ConcurrentHashMap<>();
+            EntityData existing = bucket.get(blueprintName);
+            if (existing != null) {
+                ModelEngineEntityData d = (ModelEngineEntityData) existing;
+                if (d.getActiveModel() == megActiveModel) return bucket; // 同一 ActiveModel 的完全重复事件，忽略
+                // 不同实例：同一 base 实体重复挂载（ModelEngine 为它建了新的 ModeledEntity/ActiveModel，旧的随后被销毁）。
+                // 刷新指向最新活实例，复用同一 PacketEntity 与定时任务，避免一直跟踪已销毁/静止实例导致基岩端动画不同步。
+                d.updateModel(megEntity, megActiveModel);
                 if (plugin.getConfigManager().getConfig().getBoolean("options.debug.spawn")) plugin.getLogger().info("Refreshed " + blueprintName + " to latest ActiveModel instance");
-                return;
+                return bucket;
             }
-        }
-
-        PropertyHandler propertyHandler = plugin.getEntityTaskManager().getPropertyHandler();
-        EntityData entityData = new ModelEngineEntityData(plugin, megEntity, megActiveModel);
-        Model model = new ModelEngineModel(megActiveModel, this, entityData, propertyHandler);
-
-        plugin.getModelManager().getModelEntitiesCache().put(entityID, model);
-        entityDataCache.put(model, entityData);
-
-        if (plugin.getConfigManager().getConfig().getBoolean("options.debug.spawn")) plugin.getLogger().info("Creating model for " + model.getName());
+            bucket.put(blueprintName, new ModelEngineEntityData(plugin, megEntity, megActiveModel));
+            if (plugin.getConfigManager().getConfig().getBoolean("options.debug.spawn")) plugin.getLogger().info("Creating model for " + blueprintName);
+            return bucket;
+        });
     }
 
     @Override
     public void processEntities(Entity entity) {
-        if (plugin.getModelManager().getEntitiesCache().containsKey(entity.getEntityId())) return;
+        if (plugin.getModelManager().getEntities().containsKey(entity.getEntityId())) return;
 
         ModeledEntity modeledEntity = ModelEngineAPI.getModeledEntity(entity);
         if (modeledEntity == null) return;

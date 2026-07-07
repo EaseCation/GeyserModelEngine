@@ -8,6 +8,7 @@ models:
   properties-send-delay: 30 # ms
   entity-position-update-period: 35 # ms
   thread-pool-size: 4
+  respawn-resend-delay: 20 # tick, 玩家 respawn/换维度后延迟多久重发模型载体(等客户端实体系统 resync 就绪)
 
 options:
   debug:

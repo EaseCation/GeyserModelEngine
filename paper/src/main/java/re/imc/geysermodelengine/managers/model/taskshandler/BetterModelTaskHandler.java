@@ -2,8 +2,6 @@ package re.imc.geysermodelengine.managers.model.taskshandler;
 
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
-import kr.toxicity.model.api.entity.BaseEntity;
-import kr.toxicity.model.api.tracker.EntityTracker;
 import me.zimzaza4.geyserutils.spigot.api.EntityUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -32,17 +30,23 @@ public class BetterModelTaskHandler implements TaskHandler {
     private float lastScale = -1.0f;
     private Color lastColor = null;
 
-    private boolean removed = false;
+    // volatile：teardown 写在 20ms 轮询线程、延迟 spawn 任务读在另一池线程；
+    // compute 外的读点(runAsync/checkViewers)靠 volatile 见新值，compute 内的读已由 bin 锁建立 happens-before。
+    private volatile boolean removed = false;
 
     private final ConcurrentHashMap<String, Integer> lastIntSet = new ConcurrentHashMap<>();
     private final Cache<String, Boolean> lastPlayedAnim = CacheBuilder.newBuilder().expireAfterWrite(30, TimeUnit.MILLISECONDS).build();
 
+    // 非 final：构造与调度拆分（见 start()），关闭构造期 this-escape 竞态
     private ScheduledFuture scheduledFuture;
 
     public BetterModelTaskHandler(GeyserModelEngine plugin, BetterModelEntityData entityData) {
         this.plugin = plugin;
         this.entityData = entityData;
+    }
 
+    @Override
+    public void start() {
         plugin.getEntityTaskManager().sendHitBoxToAll(entityData);
         scheduledFuture = plugin.getSchedulerPool().scheduleAtFixedRate(() -> {
             try {
@@ -55,32 +59,21 @@ public class BetterModelTaskHandler implements TaskHandler {
 
     @Override
     public void runAsync() {
-        plugin.getEntityTaskManager().checkViewers(entityData, entityData.getViewers());
+        if (removed || entityData == null) return;
 
         PacketEntity entity = entityData.getEntity();
-        if (entity.isDead()) return;
+        if (entity == null || entity.isDead()) return;
 
-        Set<Player> viewers = entityData.getViewers();
-        BaseEntity entitySource = entityData.getEntitySource();
-        EntityTracker entityTracker = entityData.getEntityTracker();
+        plugin.getEntityTaskManager().checkViewers(entityData, entityData.getViewers());
 
         entityData.teleportToModel();
 
-        if (entitySource.dead() || entityTracker.forRemoval()) {
-            removed = true;
-            entity.remove();
+        Set<Player> viewers = entityData.getViewers();
 
-            plugin.getModelManager().getEntitiesCache().remove(entitySource.id());
-            plugin.getModelManager().getModelEntitiesCache().remove(entitySource.id());
-
-            cancel();
-
-            Bukkit.getPluginManager().callEvent(new GeyserModelEngineEntityDeathEvent(entityData));
+        // 快照优化：先做便宜的门控；权威判据在 entities.compute 锁内重读。
+        if (entityData.isModelDead()) {
+            teardown();
             return;
-        }
-
-        if (tick % 40 == 0) {
-            viewers.removeIf(viewer -> !plugin.getEntityTaskManager().canSee(viewer, entityData.getEntity(), entityData.getModelInstance()));
         }
 
         tick++;
@@ -95,6 +88,35 @@ public class BetterModelTaskHandler implements TaskHandler {
         plugin.getEntityTaskManager().getPropertyHandler().sendColor(entityData, viewers, lastColor, false);
     }
 
+    /**
+     * H1：teardown 决策+动作整体进 entities.compute，锁内重读复检，与 create 的 updateTracker 互斥。
+     * 与 MEG 侧同构：避免 TOCTOU 误销毁一个刚被并发挂载刷新为 live 的载体。
+     * remove/cancel/死亡事件等副作用在 compute 外经 tornDown 标志触发（锁卫生）。
+     */
+    private void teardown() {
+        int entityID = entityData.getBaseEntityId();
+        String blueprintName = entityData.getBlueprintName();
+        final boolean[] tornDown = {false};
+
+        plugin.getModelManager().getEntities().compute(entityID, (id, bucket) -> {
+            if (bucket == null) return null;
+            EntityData cur = bucket.get(blueprintName);
+            if (cur != this.entityData) return bucket;              // 已被替换/移除，别动
+            if (!cur.isModelDead()) return bucket;                  // 锁内重读：已刷新为 live → 中止，不 remove/不 cancel
+            removed = true;
+            entityData.getEntity().remove();                       // 只销毁本 PacketEntity
+            cancel();
+            bucket.remove(blueprintName);                          // 只删本蓝图这一条（不误伤兄弟蓝图）
+            tornDown[0] = true;
+            return bucket.isEmpty() ? null : bucket;               // 桶空才摘外层
+        });
+
+        if (tornDown[0]) {
+            if (plugin.getConfigManager().getConfig().getBoolean("options.debug.death")) plugin.getLogger().info(blueprintName + " has died, removing runAsync!");
+            Bukkit.getPluginManager().callEvent(new GeyserModelEngineEntityDeathEvent(entityData));
+        }
+    }
+
     @Override
     public void sendEntityData(EntityData entityData, Player player, int delay) {
         BetterModelEntityData betterModelEntityData = (BetterModelEntityData) entityData;
@@ -104,9 +126,28 @@ public class BetterModelTaskHandler implements TaskHandler {
         if (plugin.getConfigManager().getConfig().getBoolean("options.debug.send-data")) plugin.getLogger().info("Setting custom entity data for " + betterModelEntityData.getEntityTracker().name());
 
         plugin.getSchedulerPool().schedule(() -> {
-            entityData.getEntity().sendSpawnPacket(Collections.singletonList(player));
+            // H8：延迟 spawn 的「判定+发包」整体进 entities.computeIfPresent，与 teardown 的 compute 同键串行。
+            // teardown 先跑 → 桶已摘除本蓝图/本键 → 此处命中不到本 data → 跳过；spawn 先跑 → 客户端 spawn→destroy 干净。
+            // 杜绝迟到 spawn 在 death-destroy 之后新建一个无人回收的客户端孤儿 actor（「留头」根因）。
+            int entityID = this.entityData.getBaseEntityId();
+            String blueprintName = this.entityData.getBlueprintName();
+            final boolean[] spawned = {false};
+
+            plugin.getModelManager().getEntities().computeIfPresent(entityID, (id, bucket) -> {
+                if (bucket.get(blueprintName) == this.entityData
+                        && !removed
+                        && !this.entityData.getEntity().isDead()
+                        && this.entityData.getViewers().contains(player)) {
+                    this.entityData.getEntity().sendSpawnPacket(Collections.singletonList(player));
+                    spawned[0] = true;
+                }
+                return bucket;                 // 不改桶结构，仅原子读判+发包
+            });
+            if (!spawned[0]) return;
 
             plugin.getSchedulerPool().schedule(() -> {
+                // 属性/尺寸/颜色属非关键（Geyser 对不存在实体的更新 no-op），保留轻量守卫即可
+                if (removed || entityData.getEntity().isDead() || !entityData.getViewers().contains(player)) return;
                 plugin.getEntityTaskManager().getPropertyHandler().sendHitBox(entityData, player);
 
                 plugin.getEntityTaskManager().getPropertyHandler().sendScale(entityData, Collections.singleton(player), lastScale, true);
@@ -119,7 +160,7 @@ public class BetterModelTaskHandler implements TaskHandler {
 
     @Override
     public void cancel() {
-        scheduledFuture.cancel(true);
+        if (scheduledFuture != null) scheduledFuture.cancel(true);
     }
 
     public void setTick(int tick) {

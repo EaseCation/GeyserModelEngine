@@ -44,6 +44,7 @@ public class ModelEngineEntityData implements EntityData {
 
     public void runEntityTask() {
         entityTask = new ModelEngineTaskHandler(plugin, this);
+        entityTask.start(); // 先赋值 entityTask 再启动，关闭构造期 getEntityTask()==null 竞态
     }
 
     /**
@@ -81,5 +82,21 @@ public class ModelEngineEntityData implements EntityData {
 
     public ActiveModel getActiveModel() {
         return activeModel;
+    }
+
+    @Override
+    public int getBaseEntityId() {
+        return modeledEntity.getBase().getEntityId();
+    }
+
+    @Override
+    public String getBlueprintName() {
+        return activeModel.getBlueprint().getName();
+    }
+
+    @Override
+    public boolean isModelDead() {
+        ActiveModel am = activeModel;
+        return am == null || am.isDestroyed() || am.isRemoved();
     }
 }

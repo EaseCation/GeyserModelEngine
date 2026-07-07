@@ -57,6 +57,9 @@ public class GeyserModelEngine extends JavaPlugin {
     public void onDisable() {
         this.modelManager.removeEntities();
 
+        // H7：removeEntities 已 cancel 每个载体的 20ms 任务；此处关闭线程池，杜绝 /reload 泄漏池与在途任务
+        if (this.schedulerPool != null) this.schedulerPool.shutdownNow();
+
         PacketEvents.getAPI().terminate();
         CommandAPI.onDisable();
     }

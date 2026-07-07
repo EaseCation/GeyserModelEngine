@@ -6,6 +6,12 @@ import re.imc.geysermodelengine.managers.model.entity.EntityData;
 public interface TaskHandler {
 
     /**
+     * 启动定时任务。必须在 EntityData 把 entityTask 字段赋值完成后再调用，
+     * 避免首个 tick 观察到 null 的 getEntityTask()（构造期 this-escape 竞态）。
+     */
+    void start();
+
+    /**
      * Runs the entity scheduler
      */
     void runAsync();
