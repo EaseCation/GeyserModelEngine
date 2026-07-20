@@ -31,23 +31,31 @@ class ResourcePackPublicationTest {
     }
 
     @Test
-    void publishesDirectoryAndZipTogether() throws Exception {
+    void publishesDirectoryZipAndCompatibilityReportTogether() throws Exception {
         Path targetDirectory = temp.resolve("generated_pack");
         Path targetZip = temp.resolve("generated_pack.zip");
+        Path targetReport = temp.resolve("compatibility-report.json");
         Path candidateDirectory = temp.resolve("candidate_pack");
         Path candidateZip = temp.resolve("candidate.zip");
+        Path candidateReport = temp.resolve("candidate-report.json");
         Files.createDirectories(targetDirectory);
         Files.createDirectories(candidateDirectory);
         Files.writeString(targetDirectory.resolve("value.txt"), "old");
         Files.writeString(targetZip, "old zip");
+        Files.writeString(targetReport, "old report");
         Files.writeString(candidateDirectory.resolve("value.txt"), "new");
         Files.writeString(candidateZip, "new zip");
+        Files.writeString(candidateReport, "new report");
 
-        AtomicPackPublisher.publish(candidateDirectory, candidateZip, targetDirectory, targetZip);
+        AtomicPackPublisher.publish(
+                candidateDirectory, candidateZip, candidateReport,
+                targetDirectory, targetZip, targetReport);
 
         assertTrue(Files.readString(targetDirectory.resolve("value.txt")).equals("new"));
         assertTrue(Files.readString(targetZip).equals("new zip"));
+        assertTrue(Files.readString(targetReport).equals("new report"));
         assertFalse(Files.exists(candidateDirectory));
         assertFalse(Files.exists(candidateZip));
+        assertFalse(Files.exists(candidateReport));
     }
 }

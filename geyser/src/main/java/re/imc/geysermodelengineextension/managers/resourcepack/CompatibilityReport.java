@@ -45,11 +45,13 @@ final class CompatibilityReport {
 
         int formalModels = 0;
         int plainOnlyModels = 0;
+        int caseVariantModels = 0;
         int headlessModels = 0;
         int lookEnabledModels = 0;
         int lookDisabledByConfigModels = 0;
         int reviewModels = 0;
         int sourceAnchorRotationChannels = 0;
+        int restoredLegacyFlattenRotationChannels = 0;
 
         for (String modelId : geometries.keySet().stream().sorted().toList()) {
             Geometry geometry = geometries.get(modelId);
@@ -58,9 +60,13 @@ final class CompatibilityReport {
 
             Entity entity = entities.get(modelId);
             ModelConfig config = entity == null ? null : entity.getModelConfig();
-            boolean headRotationEnabled = config == null || config.isEnableHeadRotation();
+            boolean hasUsableConfig = entity != null && config != null;
+            boolean headRotationEnabled = hasUsableConfig && config.isEnableHeadRotation();
             boolean hasFormalHead = !profile.modelEngineHeadBones().isEmpty();
             boolean plainOnly = !hasFormalHead && !profile.plainHeadBones().isEmpty();
+            boolean caseVariantOnly = !hasFormalHead
+                    && profile.plainHeadBones().isEmpty()
+                    && !profile.caseVariantHeadBones().isEmpty();
             boolean headless = !hasFormalHead
                     && profile.plainHeadBones().isEmpty()
                     && profile.caseVariantHeadBones().isEmpty();
@@ -68,6 +74,7 @@ final class CompatibilityReport {
 
             if (hasFormalHead) formalModels++;
             if (plainOnly) plainOnlyModels++;
+            if (caseVariantOnly) caseVariantModels++;
             if (headless) headlessModels++;
             if (injectLook) lookEnabledModels++;
             if (hasFormalHead && !headRotationEnabled) lookDisabledByConfigModels++;
@@ -75,10 +82,16 @@ final class CompatibilityReport {
             SourceRotationSummary rotationSummary = sourceRotationSummary(
                     animations.get(modelId), profile.headAnchors());
             sourceAnchorRotationChannels += rotationSummary.channels();
+            List<String> legacyFlattenTargets = hasFormalHead
+                    ? profile.headAnchors()
+                    : profile.plainHeadBones().contains("head") ? List.of("head") : List.of();
+            SourceRotationSummary legacyFlattenSummary = sourceRotationSummary(
+                    animations.get(modelId), legacyFlattenTargets);
+            restoredLegacyFlattenRotationChannels += legacyFlattenSummary.channels();
 
             boolean sourceAnimationPresent = animations.get(modelId) != null;
             List<Warning> modelWarnings = collectWarnings(
-                    modelId, profile, headRotationEnabled, sourceAnimationPresent);
+                    modelId, profile, hasUsableConfig, headRotationEnabled, sourceAnimationPresent);
             warnings.addAll(modelWarnings);
             if (!modelWarnings.isEmpty()) reviewModels++;
 
@@ -89,10 +102,12 @@ final class CompatibilityReport {
 
             JsonObject headRotation = new JsonObject();
             headRotation.addProperty("effective", headRotationEnabled);
-            headRotation.addProperty("look_at_target", injectLook
+            String lookStatus = injectLook
                     ? "INJECTED"
-                    : hasFormalHead ? "DISABLED_BY_HEAD_ROTATION_CONFIG"
-                    : "NOT_INJECTED_NO_MODELENGINE_HEAD");
+                    : !hasFormalHead ? "NOT_INJECTED_NO_MODELENGINE_HEAD"
+                    : !hasUsableConfig ? "NOT_INJECTED_MISSING_MODEL_CONFIG"
+                    : "DISABLED_BY_HEAD_ROTATION_CONFIG";
+            headRotation.addProperty("look_at_target", lookStatus);
             headRotation.addProperty("source_animation_present", sourceAnimationPresent);
             model.add("head_rotation", headRotation);
 
@@ -104,6 +119,8 @@ final class CompatibilityReport {
             model.add("non_head_named_anchors", strings(profile.nonHeadNamedAnchors()));
             model.add("source_anchor_rotation_bones", strings(rotationSummary.bones()));
             model.addProperty("source_anchor_rotation_channels", rotationSummary.channels());
+            model.addProperty("source_legacy_flatten_rotation_channels_restored",
+                    legacyFlattenSummary.channels());
 
             JsonObject runtimeLocks = new JsonObject();
             runtimeLocks.addProperty("lockyaw", "NOT_AVAILABLE_IN_EXPORTED_RESOURCE_JSON");
@@ -136,11 +153,14 @@ final class CompatibilityReport {
         summary.addProperty("total_models", geometries.size());
         summary.addProperty("modelengine_head_models", formalModels);
         summary.addProperty("plain_head_only_models", plainOnlyModels);
+        summary.addProperty("case_variant_head_prefix_models", caseVariantModels);
         summary.addProperty("headless_models", headlessModels);
         summary.addProperty("look_enabled_models", lookEnabledModels);
         summary.addProperty("look_disabled_by_config_models", lookDisabledByConfigModels);
         summary.addProperty("review_required_models", reviewModels);
         summary.addProperty("source_anchor_rotation_channels_preserved", sourceAnchorRotationChannels);
+        summary.addProperty("source_legacy_flatten_rotation_channels_restored",
+                restoredLegacyFlattenRotationChannels);
 
         JsonArray limitations = new JsonArray();
         limitations.add("Custom ModelEngine behavior parsers are not represented in exported resource JSON.");
@@ -160,10 +180,15 @@ final class CompatibilityReport {
     private static List<Warning> collectWarnings(
             String modelId,
             HeadModelProfile profile,
+            boolean hasUsableConfig,
             boolean headRotationEnabled,
             boolean sourceAnimationPresent
     ) {
         List<Warning> result = new ArrayList<>();
+        if (!hasUsableConfig) {
+            result.add(new Warning(modelId, "MISSING_MODEL_CONFIG",
+                    "No usable client entity/model config was loaded; runtime look is not injected"));
+        }
         if (!profile.caseVariantHeadBones().isEmpty()) {
             result.add(new Warning(modelId, "CASE_VARIANT_HEAD_PREFIX",
                     "Case-variant H_/HI_ prefixes are not ModelEngine Head behaviors: "
@@ -179,11 +204,12 @@ final class CompatibilityReport {
                     "Formal ModelEngine Head bones coexist with plain head-like bones: "
                             + profile.plainHeadBones()));
         }
-        if (!profile.modelEngineHeadBones().isEmpty() && !headRotationEnabled) {
+        if (!profile.modelEngineHeadBones().isEmpty() && hasUsableConfig && !headRotationEnabled) {
             result.add(new Warning(modelId, "HEAD_ROTATION_DISABLED_BY_MODEL_CONFIG",
                     "head_rotation:false is respected; no look animation or head scale escape bake is generated"));
         }
-        if (!profile.modelEngineHeadBones().isEmpty() && headRotationEnabled && !sourceAnimationPresent) {
+        if (!profile.modelEngineHeadBones().isEmpty() && hasUsableConfig
+                && headRotationEnabled && !sourceAnimationPresent) {
             result.add(new Warning(modelId, "SYNTHESIZED_HEAD_ANIMATION_FILE",
                     "No source animation JSON was present; a look-only animation file is generated"));
         }

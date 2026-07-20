@@ -52,6 +52,7 @@ class ProductionResourcePackRebuildTest {
 
         Path generated = data.resolve("ResourcePack/generated_pack");
         Path generatedZip = data.resolve("ResourcePack/generated_pack.zip");
+        Path compatibilityReport = data.resolve("ResourcePack/compatibility-report.json");
         ResourcePackValidator.ValidationReport report = ResourcePackValidator.validate(generated);
         report.throwIfInvalid();
         ResourcePackValidator.validateArchiveMatches(generated, generatedZip);
@@ -63,11 +64,29 @@ class ProductionResourcePackRebuildTest {
                 newManifest.getAsJsonObject("header").getAsJsonArray("version").get(2).getAsInt());
         assertEquals(oldManifest.getAsJsonObject("header").get("uuid"),
                 newManifest.getAsJsonObject("header").get("uuid"));
-        assertTrue(logger.info.stream().anyMatch(message -> message.contains("P0 semantic migration guard passed")));
+        assertTrue(logger.info.stream().anyMatch(message ->
+                message.contains("Generated Bedrock model pack: models=73")));
+
+        JsonObject compatibility = readJson(compatibilityReport);
+        JsonObject compatibilitySummary = compatibility.getAsJsonObject("summary");
+        assertEquals(73, compatibilitySummary.get("total_models").getAsInt());
+        assertEquals(37, compatibilitySummary.get("modelengine_head_models").getAsInt());
+        assertEquals(7, compatibilitySummary.get("plain_head_only_models").getAsInt());
+        assertEquals(29, compatibilitySummary.get("headless_models").getAsInt());
+        assertEquals(37, compatibilitySummary.get("look_enabled_models").getAsInt());
+        assertEquals(268,
+                compatibilitySummary.get("source_anchor_rotation_channels_preserved").getAsInt());
+        assertEquals(322,
+                compatibilitySummary.get("source_legacy_flatten_rotation_channels_restored").getAsInt());
+        assertTrue(logger.warnings.stream().anyMatch(message ->
+                message.contains("[COMPATIBILITY WARN]")
+                        && message.contains("requires developer Bedrock device test")));
 
         byte[] firstZip = Files.readAllBytes(generatedZip);
+        byte[] firstCompatibilityReport = Files.readAllBytes(compatibilityReport);
         extension.getResourcePackManager().loadPack();
         assertArrayEquals(firstZip, Files.readAllBytes(generatedZip));
+        assertArrayEquals(firstCompatibilityReport, Files.readAllBytes(compatibilityReport));
         assertEquals(newManifest,
                 readManifest(generated.resolve("manifest.json")));
 
@@ -82,10 +101,15 @@ class ProductionResourcePackRebuildTest {
             }
             copyTree(generated, output.resolve("generated_pack"));
             copyFile(generatedZip, output.resolve("generated_pack.zip"));
+            copyFile(compatibilityReport, output.resolve("compatibility-report.json"));
         }
     }
 
     private static JsonObject readManifest(Path path) throws IOException {
+        return readJson(path);
+    }
+
+    private static JsonObject readJson(Path path) throws IOException {
         return JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject();
     }
 
@@ -129,6 +153,7 @@ class ProductionResourcePackRebuildTest {
 
     private static final class CapturingLogger implements ExtensionLogger {
         private final List<String> info = new ArrayList<>();
+        private final List<String> warnings = new ArrayList<>();
 
         @Override
         public String prefix() {
@@ -157,7 +182,7 @@ class ProductionResourcePackRebuildTest {
 
         @Override
         public void warning(String message) {
-            // Expected for retained but currently unreferenced P1 assets.
+            warnings.add(message);
         }
 
         @Override

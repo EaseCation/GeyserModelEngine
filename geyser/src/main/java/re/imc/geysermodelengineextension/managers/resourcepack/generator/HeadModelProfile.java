@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,7 +41,8 @@ public final class HeadModelProfile {
             List<String> nonHeadNamedAnchors,
             List<String> mountBones
     ) {
-        this.parentByBone = Map.copyOf(parentByBone);
+        // Root bones intentionally have a null parent; Map.copyOf rejects null values.
+        this.parentByBone = Collections.unmodifiableMap(new LinkedHashMap<>(parentByBone));
         this.modelEngineHeadBones = List.copyOf(modelEngineHeadBones);
         this.headAnchors = List.copyOf(headAnchors);
         this.nestedHeadBones = List.copyOf(nestedHeadBones);
