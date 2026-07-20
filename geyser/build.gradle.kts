@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "re.imc"
-version = "1.0.8"
+version = "1.0.9"
 
 repositories {
     mavenCentral()
@@ -25,6 +25,17 @@ dependencies {
     implementation("org.spongepowered:configurate-yaml:4.2.0-GeyserMC-SNAPSHOT")
     implementation("com.google.code.gson:gson:2.13.1")
     implementation("de.tomalbrc:blockbench-import-library:1.7.0+1.21.9")
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testImplementation("org.geysermc.geyser:api:2.9.2-SNAPSHOT")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
+    testRuntimeOnly("org.geysermc.geyser:core:2.9.2-SNAPSHOT")
+    testRuntimeOnly("me.zimzaza4:geyserutils-geyser:1.0-SNAPSHOT")
+}
+
+tasks.test {
+    useJUnitPlatform()
+    inputs.property("gmeRuntimeData", providers.environmentVariable("GME_RUNTIME_DATA").orElse(""))
 }
 
 tasks.shadowJar {

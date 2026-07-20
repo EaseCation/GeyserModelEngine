@@ -26,7 +26,8 @@ public class ResourcePackManager {
     private final File inputFolder;
     private final File generatedPack;
 
-    private Path generatedPackZipPath;
+    private final Path generatedPackZipPath;
+    private final Path compatibilityReportPath;
 
     private final HashMap<String, Entity> entityCache = new HashMap<>();
     private final HashMap<String, Animation> animationCache = new HashMap<>();
@@ -42,25 +43,130 @@ public class ResourcePackManager {
         this.inputFolder.mkdirs();
 
         this.generatedPack = extension.dataFolder().resolve("ResourcePack/generated_pack").toFile();
+        this.generatedPackZipPath = extension.dataFolder().resolve("ResourcePack/generated_pack.zip");
+        this.compatibilityReportPath = extension.dataFolder().resolve("ResourcePack/compatibility-report.json");
     }
 
-    public void loadPack() {
-        generateResourcePack(inputFolder, generatedPack);
-        generatedPackZipPath = extension.dataFolder().resolve("ResourcePack/generated_pack.zip");
+    public synchronized void loadPack() {
+        Path resourcePackDirectory = generatedPack.toPath().getParent();
+        Path candidateDirectory = null;
+        Path candidateZip = null;
+        Path candidateReport = null;
 
-        try (ZipOutputStream zipOutputStream = new ZipOutputStream(Files.newOutputStream(generatedPackZipPath))) {
-            ZipUtil.compressFolder(generatedPack, null, zipOutputStream);
-        } catch (IOException err) {
-            throw new RuntimeException(err);
+        try {
+            Files.createDirectories(resourcePackDirectory);
+            validateCurrentPackPair();
+            candidateDirectory = Files.createTempDirectory(resourcePackDirectory, ".generated_pack-build-");
+            candidateZip = Files.createTempFile(resourcePackDirectory, ".generated_pack-build-", ".zip");
+            candidateReport = Files.createTempFile(resourcePackDirectory, ".compatibility-report-build-", ".json");
+
+            clearCaches();
+            CompatibilityReport compatibility = generateResourcePack(inputFolder, candidateDirectory.toFile());
+            Files.writeString(candidateReport, GSON.toJson(compatibility.json()), StandardCharsets.UTF_8);
+
+            int sanitizedTimelineCommands = animationCache.values().stream()
+                    .mapToInt(Animation::getSanitizedMythicTimelineEntries)
+                    .sum();
+            boolean contentChanged = !ResourcePackFileOps.contentEqualsIgnoringManifest(
+                    generatedPack.toPath(), candidateDirectory);
+
+            PackManifestManager.ManifestBuild manifest = PackManifestManager.prepare(
+                    extension.getConfigManager().getResourcePackTemplatesCache().get("packmanifest"),
+                    generatedPack.toPath(), generatedPackZipPath, contentChanged);
+            Files.writeString(candidateDirectory.resolve("manifest.json"),
+                    GSON.toJson(manifest.manifest()), StandardCharsets.UTF_8);
+
+            ResourcePackValidator.ValidationReport validation = ResourcePackValidator.validate(candidateDirectory);
+            validation.throwIfInvalid();
+            ResourcePackMigrationGuard.MigrationCheck migration = ResourcePackMigrationGuard.verify(
+                    generatedPack.toPath(), candidateDirectory);
+
+            try (ZipOutputStream zipOutputStream = new ZipOutputStream(Files.newOutputStream(candidateZip))) {
+                ZipUtil.compressFolder(candidateDirectory.toFile(), null, zipOutputStream);
+            }
+            ResourcePackValidator.validateArchiveMatches(candidateDirectory, candidateZip);
+
+            AtomicPackPublisher.publish(
+                    candidateDirectory, candidateZip, candidateReport,
+                    generatedPack.toPath(), generatedPackZipPath, compatibilityReportPath);
+            candidateDirectory = null;
+            candidateZip = null;
+            candidateReport = null;
+
+            extension.logger().info("Generated Bedrock model pack: models=" + entityCache.size()
+                    + ", sanitized-mm=" + sanitizedTimelineCommands
+                    + ", version=" + manifest.versionString()
+                    + ", content-changed=" + contentChanged);
+            if (migration.applied()) {
+                extension.logger().info("P0 semantic migration guard passed: only "
+                        + migration.removedCommands() + " mm: timeline command(s) changed");
+            }
+            for (String warning : validation.warnings()) {
+                extension.logger().warning("Resource-pack validation warning: " + warning);
+            }
+            for (CompatibilityReport.Warning warning : compatibility.warnings()) {
+                extension.logger().warning("[COMPATIBILITY WARN] model=" + warning.modelId()
+                        + " code=" + warning.code() + " reason=" + warning.message()
+                        + "; requires developer Bedrock device test");
+            }
+        } catch (Exception error) {
+            extension.logger().severe("Bedrock model pack rebuild failed; the previous generated pack was preserved: "
+                    + error.getMessage());
+            if (error instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new RuntimeException(error);
+        } finally {
+            deleteTemporary(candidateDirectory);
+            deleteTemporary(candidateZip);
+            deleteTemporary(candidateReport);
         }
 
-        for (Entity entity : entityCache.values()) {
-            entity.register(extension.getConfigManager().getConfig().getString("models.namespace"));
+        try {
+            for (Entity entity : entityCache.values()) {
+                entity.register(extension.getConfigManager().getConfig().getString("models.namespace"));
+            }
+        } catch (RuntimeException error) {
+            extension.logger().severe(
+                    "Bedrock model pack was published, but custom-entity registration failed", error);
+            throw error;
         }
     }
 
-    private void generateResourcePack(File inputFolder, File output) {
+    private void validateCurrentPackPair() throws IOException {
+        boolean directoryExists = Files.isDirectory(generatedPack.toPath());
+        boolean zipExists = Files.isRegularFile(generatedPackZipPath);
+        if (zipExists && !directoryExists) {
+            throw new IOException("Current generated_pack directory is missing while generated_pack.zip exists; "
+                    + "refusing to bypass the P0 semantic migration guard");
+        }
+        if (directoryExists && zipExists) {
+            ResourcePackValidator.validateArchiveMatches(generatedPack.toPath(), generatedPackZipPath);
+        }
+    }
+
+    private void clearCaches() {
+        entityCache.clear();
+        animationCache.clear();
+        geometryCache.clear();
+        textureCache.clear();
+    }
+
+    private void deleteTemporary(Path path) {
+        try {
+            ResourcePackFileOps.deleteRecursively(path);
+        } catch (IOException error) {
+            extension.logger().warning("Unable to remove temporary resource-pack path " + path + ": "
+                    + error.getMessage());
+        }
+    }
+
+    private CompatibilityReport generateResourcePack(File inputFolder, File output) {
         generateFromFolder("", inputFolder, true);
+
+        CompatibilityReport compatibility = CompatibilityReport.analyze(
+                entityCache, geometryCache, animationCache);
+        ensureHeadAnimationsExist(compatibility);
 
         boolean hashEnabled = extension.getConfigManager().getConfig().getBoolean("options.resource-pack.hash-models-textures", true);
 
@@ -72,22 +178,7 @@ public class ResourcePackManager {
         File renderControllersFolder = new File(output, "render_controllers");
         File materialsFolder = new File(output, "materials");
 
-        File manifestFile = new File(output, "manifest.json");
-
         output.mkdirs();
-        if (!manifestFile.exists()) {
-            try {
-                JsonObject packManifestObject = extension.getConfigManager().getResourcePackTemplatesCache().get("packmanifest");
-
-                String packManifestString = GSON.toJson(packManifestObject)
-                        .replace("%uuid-1%", UUID.randomUUID().toString())
-                        .replace("%uuid-2%", UUID.randomUUID().toString());
-
-                Files.writeString(manifestFile.toPath(), packManifestString, StandardCharsets.UTF_8);
-            } catch (IOException err) {
-                throw new RuntimeException(err);
-            }
-        }
 
         animationsFolder.mkdirs();
         entityFolder.mkdirs();
@@ -107,16 +198,19 @@ public class ResourcePackManager {
             }
         }
 
-        boolean lockHeadToBody = extension.getConfigManager().getConfig().getBoolean("models.lock-head-to-body", true);
-
         for (Map.Entry<String, Animation> entry : animationCache.entrySet()) {
             Entity entity = entityCache.get(entry.getKey());
             Geometry geo = geometryCache.get(entry.getKey());
 
-            if (geo != null) {
-                entry.getValue().addHeadBind(geo);
-                entry.getValue().bakeAncestorScaleToEscapeBones(geo);   // 方案A：给逃逸头骨下烤 reaches-zero 祖先 scale（根治「留头」）
-                if (lockHeadToBody) entry.getValue().neutralizeHeadRotation(geo);   // 通用锁头：压平逃逸头骨 rotation → head=body（复刻 Java maxhead=0）
+            if (geo != null && entity != null) {
+                HeadModelProfile profile = compatibility.profile(entry.getKey());
+                boolean injectHeadLook = entity.getModelConfig().isEnableHeadRotation()
+                        && profile != null
+                        && entry.getValue().addHeadBind(profile);
+                entity.setHasHeadAnimation(injectHeadLook);
+                if (injectHeadLook) {
+                    entry.getValue().bakeAncestorScaleToHeadAnchors(profile);
+                }
             }
             entry.getValue().floorZeroScalesToEpsilon();   // 隐身用 ε 而非精确 0，防 Bedrock 冻结零尺寸实体导致本体永不现身（独立于 geo）
 
@@ -230,6 +324,31 @@ public class ResourcePackManager {
                 throw new RuntimeException(err);
             }
         }
+
+        return compatibility;
+    }
+
+    private void ensureHeadAnimationsExist(CompatibilityReport compatibility) {
+        for (Map.Entry<String, Entity> entry : entityCache.entrySet()) {
+            Entity entity = entry.getValue();
+            HeadModelProfile profile = compatibility.profile(entry.getKey());
+            if (profile == null || profile.headAnchors().isEmpty()
+                    || !entity.getModelConfig().isEnableHeadRotation()
+                    || animationCache.containsKey(entry.getKey())) {
+                continue;
+            }
+
+            JsonObject root = new JsonObject();
+            root.addProperty("format_version", "1.8.0");
+            root.add("animations", new JsonObject());
+
+            Animation animation = new Animation();
+            animation.setModelId(entry.getKey());
+            animation.setPath(entity.getPath());
+            animation.setJson(root);
+            animationCache.put(entry.getKey(), animation);
+            entity.setAnimation(animation);
+        }
     }
 
     public void generateFromFolder(String currentPath, File folder, boolean root) {
@@ -255,8 +374,8 @@ public class ResourcePackManager {
             if (file.isDirectory()) generateFromFolder(currentPath + (root ? "" : folder.getName() + "/"), file, false);
 
             if (file.getName().endsWith(".zip")) {
-                try {
-                    generateFromZip(currentPath, file.getName().replace(".zip", "").toLowerCase(Locale.ROOT), new ZipFile(file));
+                try (ZipFile zip = new ZipFile(file)) {
+                    generateFromZip(currentPath, file.getName().replace(".zip", "").toLowerCase(Locale.ROOT), zip);
                 } catch (IOException err) {
                     throw new RuntimeException(err);
                 }
@@ -287,7 +406,8 @@ public class ResourcePackManager {
             if (file.getName().endsWith(".json")) {
                 try {
                     String json = Files.readString(file.toPath());
-                    if (isAnimationFile(json)) {
+                    JsonObject inputJson = parseInputJson(file.toPath().toString(), json);
+                    if (inputJson.has("animations")) {
                         Animation animation = new Animation();
                         animation.setPath(currentPath);
                         animation.setModelId(modelId);
@@ -297,7 +417,7 @@ public class ResourcePackManager {
                         entity.setAnimation(animation);
                     }
 
-                    if (isGeometryFile(json)) {
+                    if (inputJson.has("minecraft:geometry")) {
                         Geometry geometry = new Geometry();
                         geometry.load(json);
                         geometry.setPath(currentPath);
@@ -306,6 +426,7 @@ public class ResourcePackManager {
                         entity.setGeometry(geometry);
                         canAdd = true;
                     }
+                    validateExpectedModelJson(file.getName(), inputJson);
                 } catch (IOException err) {
                     throw new RuntimeException(err);
                 }
@@ -359,7 +480,9 @@ public class ResourcePackManager {
 
         if (textureConfigFile != null) {
             try {
-                modelConfig = GSON.fromJson(new InputStreamReader(zip.getInputStream(textureConfigFile)), ModelConfig.class);
+                modelConfig = GSON.fromJson(
+                        new InputStreamReader(zip.getInputStream(textureConfigFile), StandardCharsets.UTF_8),
+                        ModelConfig.class);
             } catch (IOException err) {
                 throw new RuntimeException(err);
             }
@@ -391,9 +514,12 @@ public class ResourcePackManager {
 
             if (e.getName().endsWith(".json")) {
                 try {
-                    InputStream stream = zip.getInputStream(e);
-                    String json = new String(stream.readAllBytes());
-                    if (isAnimationFile(json)) {
+                    String json;
+                    try (InputStream stream = zip.getInputStream(e)) {
+                        json = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                    }
+                    JsonObject inputJson = parseInputJson(e.getName(), json);
+                    if (inputJson.has("animations")) {
                         Animation animation = new Animation();
                         animation.setPath(currentPath);
                         animation.setModelId(modelId);
@@ -403,7 +529,7 @@ public class ResourcePackManager {
                         entity.setAnimation(animation);
                     }
 
-                    if (isGeometryFile(json)) {
+                    if (inputJson.has("minecraft:geometry")) {
                         Geometry geometry = new Geometry();
                         geometry.load(json);
                         geometry.setPath(currentPath);
@@ -412,6 +538,7 @@ public class ResourcePackManager {
                         entity.setGeometry(geometry);
                         canAdd = true;
                     }
+                    validateExpectedModelJson(e.getName(), inputJson);
                 } catch (IOException err) {
                     throw new RuntimeException(err);
                 }
@@ -425,19 +552,24 @@ public class ResourcePackManager {
         }
     }
 
-    private boolean isGeometryFile(String json) {
+    private JsonObject parseInputJson(String source, String json) {
         try {
-            return JsonParser.parseString(json).getAsJsonObject().has("minecraft:geometry");
-        } catch (Throwable ignored) {
-            return false;
+            if (!JsonParser.parseString(json).isJsonObject()) {
+                throw new IllegalArgumentException("root must be a JSON object");
+            }
+            return JsonParser.parseString(json).getAsJsonObject();
+        } catch (RuntimeException error) {
+            throw new IllegalArgumentException("Invalid JSON input " + source + ": " + error.getMessage(), error);
         }
     }
 
-    private boolean isAnimationFile(String json) {
-        try {
-            return JsonParser.parseString(json).getAsJsonObject().has("animations");
-        } catch (Throwable ignored) {
-            return false;
+    private void validateExpectedModelJson(String fileName, JsonObject json) {
+        String normalized = fileName.toLowerCase(Locale.ROOT);
+        if (normalized.endsWith(".animation.json") && !json.has("animations")) {
+            throw new IllegalArgumentException("Animation input " + fileName + " is missing animations");
+        }
+        if (normalized.endsWith(".geo.json") && !json.has("minecraft:geometry")) {
+            throw new IllegalArgumentException("Geometry input " + fileName + " is missing minecraft:geometry");
         }
     }
 

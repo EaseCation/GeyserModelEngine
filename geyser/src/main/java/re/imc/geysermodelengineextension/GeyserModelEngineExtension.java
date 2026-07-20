@@ -38,8 +38,8 @@ public class GeyserModelEngineExtension implements Extension {
                 .description("GeyserModelExtension Reload Command")
                 .permission("geysermodelengineextension.commands.reload")
                 .executor((source, command, args) -> {
-                    resourcePackManager.loadPack();
-                    source.sendMessage(configManager.getLang().getString("commands.geysermodelengineextension.reload.successfully-reloaded"));
+                    source.sendMessage("Resource-pack hot reload is disabled: restart Velocity/Geyser "
+                            + "to rebuild the pack and register its new manifest safely.");
                 })
                 .build());
     }

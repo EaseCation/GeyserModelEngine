@@ -22,6 +22,7 @@ public class Animation {
     private String modelId;
     private JsonObject json;
     private Set<String> animationIds = new HashSet<>();
+    private int sanitizedMythicTimelineEntries;
 
     private String path;
 
@@ -39,6 +40,7 @@ public class Animation {
 
     public void load(String string) {
         this.json = JsonParser.parseString(string).getAsJsonObject();
+        this.sanitizedMythicTimelineEntries = AnimationTimelineSanitizer.sanitize(this.json);
         JsonObject newAnimations = new JsonObject();
 
         boolean bakeCatmullrom = GeyserModelEngineExtension.getExtension().getConfigManager()
@@ -358,35 +360,20 @@ public class Animation {
         return result;
     }
 
-    public void addHeadBind(Geometry geometry) {
+    /** Adds ModelEngine head tracking to the validated top-level h_/hi_ anchors. */
+    public boolean addHeadBind(HeadModelProfile profile) {
+        if (profile.headAnchors().isEmpty()) return false;
+
         JsonObject object = new JsonObject();
         object.addProperty("loop", true);
         JsonObject bones = new JsonObject();
-        JsonArray array = geometry.getInternal().get("bones").getAsJsonArray();
-
-        int i = 0;
-
-        for (JsonElement element : array) {
-            if (element.isJsonObject()) {
-                String name = element.getAsJsonObject().get("name").getAsString();
-
-                String parent = "";
-                if (element.getAsJsonObject().has("parent")) parent = element.getAsJsonObject().get("parent").getAsString();
-                if (parent.startsWith("h_") || parent.startsWith("hi_")) continue;
-
-                if (name.startsWith("h_") || name.startsWith("hi_")) {
-                    bones.add(name, JsonParser.parseString(HEAD_TEMPLATE));
-                    i++;
-                }
-            }
+        for (String anchor : profile.headAnchors()) {
+            bones.add(anchor, JsonParser.parseString(HEAD_TEMPLATE));
         }
-
-        if (i == 0) return;
-
-        GeyserModelEngineExtension.getExtension().getResourcePackManager().getEntityCache().get(modelId).setHasHeadAnimation(true);
 
         object.add("bones", bones);
         json.get("animations").getAsJsonObject().add("animation." + modelId + ".look_at_target", object);
+        return true;
     }
 
     /**
@@ -394,38 +381,21 @@ public class Animation {
      * 补写其祖先的 reaches-zero scale 通道，使身体缩 0 隐身时头骨（及其正常继承的子骨 eyes/nose）同步缩 0。
      *
      * 两道安全阀：
-     *  (A) 只烤「逃逸骨」本身（内建模式 = 名为 "head" 的骨；自定义模式 = 拿到 look_at_target 模板的顶层 h_/hi_ 骨），
+     *  (A) 只烤获得 look_at_target 的顶层 h_/hi_ anchor 本身，
      *      不烤整棵几何子树 —— 逃逸骨不继承祖先缩放、给一次值即修好；其非逃逸后代正常继承一次。
      *      杜绝 naive「烤整子树」的 祖先^骨深 指数失真（magus 深度10 / creeper / hole_monster 回归）。
      *  (B) 只烤「会归零」的祖先通道（某关键帧三分量全为 0 = 真隐身）；跳过 molang 字符串、呼吸/充能等不触零缩放。
      *      自动避开 hole_monster 呼吸(~1.05) / creeper 充能(1→1.3) / magus 竖直挤压([0,1.45,0])。
      *
-     * 时序约束：必须在 addHeadBind 之后、writeString 之前调用（ResourcePackManager:114）——此处唯一同时握有
-     * 动画 scale 通道（this.json）与骨骼层级（入参 geometry）。此刻 geometry.modify()（RPM:136）尚未执行，
-     * getBones() 为空、bones 未小写化，故须自建父子表并统一 toLowerCase(Locale.ROOT)。
+     * 时序约束：必须在 addHeadBind 之后、writeString 之前调用。
      */
-    public void bakeAncestorScaleToEscapeBones(Geometry geometry) {
+    public void bakeAncestorScaleToHeadAnchors(HeadModelProfile profile) {
         if (json == null || !json.has("animations")) return;
-        JsonElement bonesElem = geometry.getInternal().get("bones");
-        if (bonesElem == null || !bonesElem.isJsonArray()) return;
-        JsonArray rawBones = bonesElem.getAsJsonArray();
 
-        // (1) 自建父子表（小写）—— 供沿父链走「会归零的祖先」
-        Map<String, String> parentOf = new HashMap<>();
-        for (JsonElement e : rawBones) {
-            if (!e.isJsonObject()) continue;
-            JsonObject b = e.getAsJsonObject();
-            if (!b.has("name")) continue;
-            String name = b.get("name").getAsString().toLowerCase(Locale.ROOT);
-            String parent = b.has("parent") ? b.get("parent").getAsString().toLowerCase(Locale.ROOT) : null;
-            parentOf.put(name, parent);
-        }
+        Set<String> headAnchors = Set.copyOf(profile.headAnchors());
+        if (headAnchors.isEmpty()) return;
 
-        // (2) 逃逸骨集 —— 与 addHeadBind / neutralizeHeadRotation 严格同判据
-        Set<String> escapeBones = computeEscapeBones(rawBones);
-        if (escapeBones.isEmpty()) return;
-
-        // (3) 逐动画：给每个逃逸骨补其「会归零的祖先」scale
+        // 逐动画：给每个 head anchor 补其「会归零的祖先」scale
         JsonObject animations = json.get("animations").getAsJsonObject();
         for (Map.Entry<String, JsonElement> a : animations.entrySet()) {
             if (a.getKey().endsWith(".look_at_target")) continue;     // 跳过自定义 look_at_target（纯 rotation 通道）
@@ -439,11 +409,11 @@ public class Animation {
             Map<String, String> keyOf = new HashMap<>();
             for (String k : animBones.keySet()) keyOf.put(k.toLowerCase(Locale.ROOT), k);
 
-            for (String bone : escapeBones) {
+            for (String bone : headAnchors) {
                 // 沿父链收集「越过逃逸集、且会归零」的祖先 scale 通道（本模型恒 = {waist}）
                 List<JsonElement> zeroAncestors = new ArrayList<>();
-                for (String cur = parentOf.get(bone); cur != null; cur = parentOf.get(cur)) {
-                    if (escapeBones.contains(cur)) continue;
+                for (String cur = profile.parentOf(bone); cur != null; cur = profile.parentOf(cur)) {
+                    if (headAnchors.contains(cur)) continue;
                     String ak = keyOf.get(cur);
                     if (ak == null) continue;
                     JsonElement ab = animBones.get(ak);
@@ -485,83 +455,11 @@ public class Animation {
     }
 
     /**
-     * 「逃逸骨」判据（单一真源，供 bakeAncestorScaleToEscapeBones / neutralizeHeadRotation 复用）：
-     * ME 判定为 Head 型、在 Java 端由 runtime（HeadImpl + BodyRotationController）覆盖旋转的顶层头骨。
-     *  - 存在 h_/hi_ 头骨时：取顶层 h_/hi_（父不以 h_/hi_ 开头）—— 与 addHeadBind 的绑定判据一致；
-     *  - 否则若存在内建 "head"：取 "head" —— 内建 animation.common.look_at_target 硬编码驱动之。
-     * 返回全小写骨名集。geometry.modify() 尚未执行（getBones() 为空、未小写化），故此处按原始 bones 数组自建。
-     */
-    private Set<String> computeEscapeBones(JsonArray rawBones) {
-        Map<String, String> parentOf = new HashMap<>();
-        boolean hasHiBones = false;
-        for (JsonElement e : rawBones) {
-            if (!e.isJsonObject()) continue;
-            JsonObject b = e.getAsJsonObject();
-            if (!b.has("name")) continue;
-            String name = b.get("name").getAsString().toLowerCase(Locale.ROOT);
-            String parent = b.has("parent") ? b.get("parent").getAsString().toLowerCase(Locale.ROOT) : null;
-            parentOf.put(name, parent);
-            if (name.startsWith("h_") || name.startsWith("hi_")) hasHiBones = true;
-        }
-
-        Set<String> escapeBones = new HashSet<>();
-        if (hasHiBones) {
-            for (Map.Entry<String, String> en : parentOf.entrySet()) {
-                String n = en.getKey(), p = en.getValue();
-                boolean isHead = n.startsWith("h_") || n.startsWith("hi_");
-                boolean parentIsHead = p != null && (p.startsWith("h_") || p.startsWith("hi_"));
-                if (isHead && !parentIsHead) escapeBones.add(n);      // 只有顶层头骨（子 h_ 骨正常继承）
-            }
-        } else if (parentOf.containsKey("head")) {
-            escapeBones.add("head");                                   // 内建 look_at_target 硬编码驱动 "head"
-        }
-        return escapeBones;
-    }
-
-    /**
-     * 通用锁头（复刻 Java {@code BodyRotation{maxhead=0}}）：把「逃逸头骨」在所有 state 动画里的
-     * {@code rotation} 通道删除 —— head 骨遂无自有旋转 → 继承父骨（body）→ 与 body 对齐、随身面向玩家。
-     *
-     * 为何等价 Java：ME 的 Head 型骨在 Java 端**总是**由 runtime 头逻辑驱动、忽略/覆盖动画烘焙的 head 旋转，
-     * 故烘焙的斜头 pose 在 Java 从不显示；基岩无此 runtime，烘焙 pose 会裸露成「头身固定夹角」。压平的骨集
-     * 与 ME 判定的 Head 型骨集（{@link #computeEscapeBones}）一致 → 双端都「head 骨不由动画驱动」→ 精确对齐。
-     *
-     * 通道隔离：**只删 rotation**，保留 scale（留头 bake 与 ε-floor 的隐身缩放）与 position → 与前两阶段零冲突。
-     * 跳过 {@code .look_at_target} 动画本体（其为纯头追踪 rotation；Entity 侧配套不再注入 → 无副作用）。
-     * 无逃逸骨（纯 VFX 模型 kunai/fangs/vex 等）→ 集空 → no-op。
-     * 时序：与 addHeadBind / bake / floor 同段调用（ResourcePackManager 生成循环），受全局 lock-head-to-body 门控。
-     */
-    public void neutralizeHeadRotation(Geometry geometry) {
-        if (json == null || !json.has("animations")) return;
-        JsonElement bonesElem = geometry.getInternal().get("bones");
-        if (bonesElem == null || !bonesElem.isJsonArray()) return;
-        Set<String> escapeBones = computeEscapeBones(bonesElem.getAsJsonArray());
-        if (escapeBones.isEmpty()) return;
-
-        JsonObject animations = json.get("animations").getAsJsonObject();
-        for (Map.Entry<String, JsonElement> a : animations.entrySet()) {
-            if (a.getKey().endsWith(".look_at_target")) continue;     // 头追踪动画本体，Entity 侧已不注入
-            JsonElement av = a.getValue();
-            if (!av.isJsonObject() || !av.getAsJsonObject().has("bones")) continue;
-            JsonElement animBonesElem = av.getAsJsonObject().get("bones");
-            if (!animBonesElem.isJsonObject()) continue;
-            JsonObject animBones = animBonesElem.getAsJsonObject();
-
-            for (String k : new ArrayList<>(animBones.keySet())) {
-                if (!escapeBones.contains(k.toLowerCase(Locale.ROOT))) continue;
-                JsonElement be = animBones.get(k);
-                if (!be.isJsonObject()) continue;
-                be.getAsJsonObject().remove("rotation");              // 只压平 rotation，scale/position 原样保留
-            }
-        }
-    }
-
-    /**
      * 把所有动画 scale 通道里的「全零三元组」抬到 ε（{@link #INVIS_EPSILON}），
      * 防 Bedrock 冻结零尺寸(奇异矩阵)实体导致隐身动画时间线与控制器求值全部卡死、本体永不现身。
      * 只动全零三元组；[0,1.45,0] 这类偏零（扁平骨/竖直挤压）不碰，零误伤。
      *
-     * 时序：必须在 {@link #bakeAncestorScaleToEscapeBones} 之后调用 —— bake 先把逃逸头骨也塌成 [0,0,0]，
+     * 时序：必须在 {@link #bakeAncestorScaleToHeadAnchors} 之后调用 —— bake 先把头部 anchor 也塌成 [0,0,0]，
      * 本方法再把 waist 与 head 的 [0,0,0] 一起抬到 [ε,ε,ε]（仍逐字节相等），既保留「无留头」又恢复现身。
      */
     public void floorZeroScalesToEpsilon() {
@@ -734,6 +632,10 @@ public class Animation {
 
     public Set<String> getAnimationIds() {
         return animationIds;
+    }
+
+    public int getSanitizedMythicTimelineEntries() {
+        return sanitizedMythicTimelineEntries;
     }
 
     public String getPath() {
