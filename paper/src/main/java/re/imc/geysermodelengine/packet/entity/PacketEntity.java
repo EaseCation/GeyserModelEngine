@@ -37,6 +37,8 @@ public class PacketEntity {
     private float headYaw;
     private float headPitch;
 
+    private final ProtocolRotationState modelEngineRotation = new ProtocolRotationState();
+
     private boolean removed = false;
 
     public PacketEntity(EntityType type, Set<Player> viewers, Location location) {
@@ -45,6 +47,7 @@ public class PacketEntity {
         this.type = type;
         this.viewers = viewers;
         this.location = location;
+        this.modelEngineRotation.update(location.getYaw(), location.getPitch(), location.getYaw());
     }
 
     public @NotNull Location getLocation() {
@@ -59,6 +62,47 @@ public class PacketEntity {
         boolean sent = this.location.getWorld() != location.getWorld() || this.location.distanceSquared(location) > 0.000001 || this.location.getYaw() != location.getYaw() || this.location.getPitch() != location.getPitch();
         this.location = location.clone();
         if (sent) sendLocationPacket(viewers);
+
+        return true;
+    }
+
+    /**
+     * Synchronizes a ModelEngine pose using the final rotations calculated by ModelEngine.
+     * The pitch is carried by the Java entity rotation while the independent head yaw is carried
+     * by ENTITY_HEAD_LOOK. Position sync resets Geyser's cached head yaw to the body yaw, so the
+     * head-look packet must always follow a position packet.
+     */
+    public synchronized boolean syncModelEnginePose(
+            @NotNull Location location,
+            float bodyYaw,
+            float headPitch,
+            float headYaw
+    ) {
+        if (location.getWorld() == null) return false;
+
+        ProtocolRotationState.Update rotationUpdate = modelEngineRotation.update(bodyYaw, headPitch, headYaw);
+        ProtocolRotationState.Rotation rotation = rotationUpdate.rotation();
+
+        Location nextLocation = location.clone();
+        nextLocation.setYaw(rotation.bodyYaw());
+        nextLocation.setPitch(rotation.headPitch());
+
+        boolean positionChanged = this.location.getWorld() != nextLocation.getWorld()
+                || this.location.distanceSquared(nextLocation) > 0.000001;
+
+        this.location = nextLocation;
+        this.headYaw = rotation.headYaw();
+        this.headPitch = rotation.headPitch();
+
+        if (positionChanged) {
+            sendLocationPacket(viewers);
+            sendHeadRotation(viewers);
+        } else if (rotationUpdate.bodyRotationChanged()) {
+            sendBodyRotation(viewers);
+            sendHeadRotation(viewers);
+        } else if (rotationUpdate.headYawChanged()) {
+            sendHeadRotation(viewers);
+        }
 
         return true;
     }
@@ -81,6 +125,13 @@ public class PacketEntity {
         players.forEach(player -> PacketEvents.getAPI().getPlayerManager().sendPacket(player, spawnEntity));
     }
 
+    /** Sends a ModelEngine actor with its body pitch/yaw and independent head yaw initialized. */
+    public synchronized void sendModelEngineSpawnPacket(Collection<Player> players) {
+        WrapperPlayServerSpawnEntity spawnEntity = new WrapperPlayServerSpawnEntity(id, uuid, type, SpigotConversionUtil.fromBukkitLocation(location), headYaw, 0, null);
+        players.forEach(player -> PacketEvents.getAPI().getPlayerManager().sendPacket(player, spawnEntity));
+        sendHeadRotation(players);
+    }
+
     public void sendLocationPacket(Collection<Player> players) {
         PacketWrapper<?> packet;
         EntityPositionData data = new EntityPositionData(SpigotConversionUtil.fromBukkitLocation(location).getPosition(), Vector3d.zero(), location.getYaw(), location.getPitch());
@@ -94,8 +145,13 @@ public class PacketEntity {
         players.forEach(player -> PacketEvents.getAPI().getPlayerManager().sendPacket(player, packet));
     }
 
+    private void sendBodyRotation(Collection<Player> players) {
+        WrapperPlayServerEntityRotation packet = new WrapperPlayServerEntityRotation(id, location.getYaw(), location.getPitch(), false);
+        players.forEach(player -> PacketEvents.getAPI().getPlayerManager().sendPacket(player, packet));
+    }
+
     public void sendHeadRotation(Collection<Player> players) {
-        WrapperPlayServerEntityRotation packet = new WrapperPlayServerEntityRotation(id, headYaw, headPitch, false);
+        WrapperPlayServerEntityHeadLook packet = new WrapperPlayServerEntityHeadLook(id, headYaw);
         players.forEach(player -> PacketEvents.getAPI().getPlayerManager().sendPacket(player, packet));
     }
 
@@ -108,4 +164,3 @@ public class PacketEntity {
         return id;
     }
 }
-

@@ -29,15 +29,35 @@ public class ModelEngineEntityData implements EntityData {
 
         this.modeledEntity = modeledEntity;
         this.activeModel = activeModel;
-        this.entity = new PacketEntity(EntityTypes.PIG, viewers, modeledEntity.getBase().getLocation());
+        Location location = modeledEntity.getBase().getLocation();
+        this.entity = new PacketEntity(EntityTypes.PIG, viewers, location);
+        this.entity.syncModelEnginePose(
+                location,
+                modeledEntity.getYBodyRot(),
+                activeModel.getXHeadRot(),
+                activeModel.getYHeadRot()
+        );
 
         runEntityTask();
     }
 
     @Override
     public void teleportToModel() {
+        ModeledEntity modeledEntity = this.modeledEntity;
+        ActiveModel activeModel = this.activeModel;
         Location location = modeledEntity.getBase().getLocation();
-        entity.teleport(location);
+
+        if (activeModel == null) {
+            entity.teleport(location);
+            return;
+        }
+
+        entity.syncModelEnginePose(
+                location,
+                modeledEntity.getYBodyRot(),
+                activeModel.getXHeadRot(),
+                activeModel.getYHeadRot()
+        );
 
         if (plugin.getConfigManager().getConfig().getBoolean("options.debug.location")) plugin.getLogger().info(activeModel.getBlueprint().getName() + " " + location);
     }

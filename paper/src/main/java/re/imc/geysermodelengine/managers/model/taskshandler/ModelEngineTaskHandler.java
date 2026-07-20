@@ -141,7 +141,7 @@ public class ModelEngineTaskHandler implements TaskHandler {
                         && !removed
                         && !this.entityData.getEntity().isDead()
                         && this.entityData.getViewers().contains(player)) {
-                    this.entityData.getEntity().sendSpawnPacket(Collections.singletonList(player));
+                    this.entityData.getEntity().sendModelEngineSpawnPacket(Collections.singletonList(player));
                     spawned[0] = true;
                 }
                 return bucket;                 // 不改桶结构，仅原子读判+发包

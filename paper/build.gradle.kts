@@ -37,6 +37,10 @@ dependencies {
     implementation("org.bstats:bstats-bukkit:3.0.2")
 
     implementation("org.reflections:reflections:0.10.2")
+
+    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 java {
@@ -45,6 +49,10 @@ java {
 
 tasks.compileJava {
     options.encoding = "UTF-8"
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 tasks.shadowJar {
