@@ -31,12 +31,7 @@ public class ModelEngineEntityData implements EntityData {
         this.activeModel = activeModel;
         Location location = modeledEntity.getBase().getLocation();
         this.entity = new PacketEntity(EntityTypes.PIG, viewers, location);
-        this.entity.syncModelEnginePose(
-                location,
-                modeledEntity.getYBodyRot(),
-                activeModel.getXHeadRot(),
-                activeModel.getYHeadRot()
-        );
+        syncEntityPose(location, modeledEntity, activeModel);
 
         runEntityTask();
     }
@@ -47,19 +42,22 @@ public class ModelEngineEntityData implements EntityData {
         ActiveModel activeModel = this.activeModel;
         Location location = modeledEntity.getBase().getLocation();
 
-        if (activeModel == null) {
-            entity.teleport(location);
-            return;
+        syncEntityPose(location, modeledEntity, activeModel);
+
+        if (plugin.getConfigManager().getConfig().getBoolean("options.debug.location") && activeModel != null) {
+            plugin.getLogger().info(activeModel.getBlueprint().getName() + " " + location);
         }
+    }
 
-        entity.syncModelEnginePose(
-                location,
+    private void syncEntityPose(Location location, ModeledEntity modeledEntity, ActiveModel activeModel) {
+        ModelEnginePoseResolver.Pose pose = ModelEnginePoseResolver.resolve(
                 modeledEntity.getYBodyRot(),
-                activeModel.getXHeadRot(),
-                activeModel.getYHeadRot()
+                modeledEntity.getXHeadRot(),
+                modeledEntity.getYHeadRot(),
+                activeModel != null && activeModel.isLockPitch(),
+                activeModel != null && activeModel.isLockYaw()
         );
-
-        if (plugin.getConfigManager().getConfig().getBoolean("options.debug.location")) plugin.getLogger().info(activeModel.getBlueprint().getName() + " " + location);
+        entity.syncModelEnginePose(location, pose.bodyYaw(), pose.headPitch(), pose.headYaw());
     }
 
     public void runEntityTask() {
