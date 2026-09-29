@@ -64,7 +64,17 @@ public class ModelEngineHandler implements ModelHandler {
         model.ifPresent(m -> createModel(modeledEntity, m));
     }
 
-    // TODO ModelEngine canSee impl
+    /** Personal waystones must follow the Dummy viewer list, including both visual layers. */
+    @Override
+    public boolean canSee(org.bukkit.entity.Player player, Object model) {
+        if (!(model instanceof ActiveModel active)) return true;
+        String name = active.getBlueprint().getName();
+        if (!name.equals("ec_waystone_shell") && !name.equals("ec_waystone_light")) return true;
+        ModeledEntity modeled = active.getModeledEntity();
+        if (modeled == null || modeled.isDestroyed()) return false;
+        if (!(modeled.getBase() instanceof com.ticxo.modelengine.api.entity.Dummy<?> dummy)) return false;
+        return !dummy.isRemoved() && dummy.getData().getTracked().getTrackedPlayer().contains(player.getUniqueId());
+    }
 
     @Override
     public void loadListeners() {
