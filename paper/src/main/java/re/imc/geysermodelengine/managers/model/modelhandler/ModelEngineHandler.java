@@ -70,7 +70,7 @@ public class ModelEngineHandler implements ModelHandler {
         if (!(model instanceof ActiveModel active)) return true;
         String name = active.getBlueprint().getName();
         if (!java.util.Set.of("ec_waystone_shell", "ec_waystone_light", "ec_waystone_heart",
-                "ec_waystone_shards", "ec_waystone_runes").contains(name)) return true;
+                "ec_waystone_shards", "ec_waystone_runes", "ec_waystone_shell_ia").contains(name)) return true;
         ModeledEntity modeled = active.getModeledEntity();
         if (modeled == null || modeled.isDestroyed()) return false;
         if (!(modeled.getBase() instanceof com.ticxo.modelengine.api.entity.Dummy<?> dummy)) return false;
