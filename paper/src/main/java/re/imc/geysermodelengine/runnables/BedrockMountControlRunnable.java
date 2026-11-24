@@ -10,6 +10,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import re.imc.geysermodelengine.GeyserModelEngine;
 
+import java.util.Iterator;
 import java.util.UUID;
 
 public class BedrockMountControlRunnable implements Runnable {
@@ -22,8 +23,14 @@ public class BedrockMountControlRunnable implements Runnable {
 
     @Override
     public void run() {
-        for (UUID playerUUID : plugin.getModelManager().getPlayerJoinedCache()) {
+        Iterator<UUID> joined = plugin.getModelManager().getPlayerJoinedCache().iterator();
+        while (joined.hasNext()) {
+            UUID playerUUID = joined.next();
             Player player = Bukkit.getPlayer(playerUUID);
+            if (player == null || !player.isOnline()) {
+                joined.remove();
+                continue;
+            }
 
             float pitch = player.getLocation().getPitch();
             Pair<ActiveModel, Mount> seat = plugin.getModelManager().getDriversCache().get(player.getUniqueId());

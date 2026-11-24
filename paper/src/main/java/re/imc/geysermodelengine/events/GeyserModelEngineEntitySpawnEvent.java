@@ -12,12 +12,20 @@ public class GeyserModelEngineEntitySpawnEvent extends Event {
     private final EntityData entityData;
 
     private final boolean firstJoined;
+    private final int baseEntityId;
+    private final int carrierEntityId;
 
     public GeyserModelEngineEntitySpawnEvent(EntityData entityData, boolean firstJoined) {
         super(true);
         this.entityData = entityData;
         this.firstJoined = firstJoined;
+        this.baseEntityId = entityData.getBaseEntityId();
+        var carrier = entityData.getEntity();
+        this.carrierEntityId = carrier == null ? -1 : carrier.getEntityId();
     }
+
+    public int getBaseEntityId() { return baseEntityId; }
+    public int getCarrierEntityId() { return carrierEntityId; }
 
     public EntityData getEntityData() {
         return entityData;
