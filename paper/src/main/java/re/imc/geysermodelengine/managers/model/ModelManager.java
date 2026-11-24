@@ -12,7 +12,7 @@ import re.imc.geysermodelengine.managers.model.modelhandler.ModelEngineHandler;
 import re.imc.geysermodelengine.managers.model.modelhandler.ModelHandler;
 import re.imc.geysermodelengine.managers.model.taskshandler.TaskHandler;
 
-import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -22,7 +22,7 @@ public class ModelManager {
 
     private ModelHandler modelHandler;
 
-    private final HashSet<UUID> playerJoinedCache = new HashSet<>();
+    private final Set<UUID> playerJoinedCache = ConcurrentHashMap.newKeySet();
 
     /**
      * 单一权威缓存：base 实体 id → (蓝图名 → EntityData)。
@@ -82,11 +82,36 @@ public class ModelManager {
         }
     }
 
+    /** Returns a carrier id without exposing shaded packet types to other plugins. */
+    public java.util.OptionalInt getCarrierEntityId(int baseId) {
+        var bucket = entities.get(baseId);
+        if (bucket == null) return java.util.OptionalInt.empty();
+        for (var data : bucket.values()) {
+            var entity = data.getEntity();
+            if (entity != null && entity.getEntityId() >= 0) return java.util.OptionalInt.of(entity.getEntityId());
+        }
+        return java.util.OptionalInt.empty();
+    }
+
+    /** Immutable id projection of the existing concurrent entity registry. */
+    public java.util.Map<Integer, java.util.Set<Integer>> getCarrierIdsByBase() {
+        var result = new java.util.HashMap<Integer, java.util.Set<Integer>>();
+        entities.forEach((base, bucket) -> {
+            var ids = new java.util.HashSet<Integer>();
+            for (var data : bucket.values()) {
+                var entity = data.getEntity();
+                if (entity != null && entity.getEntityId() >= 0) ids.add(entity.getEntityId());
+            }
+            result.put(base, java.util.Set.copyOf(ids));
+        });
+        return java.util.Map.copyOf(result);
+    }
+
     public ModelHandler getModelHandler() {
         return modelHandler;
     }
 
-    public HashSet<UUID> getPlayerJoinedCache() {
+    public Set<UUID> getPlayerJoinedCache() {
         return playerJoinedCache;
     }
 

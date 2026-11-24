@@ -64,13 +64,13 @@ public class ModelEngineHandler implements ModelHandler {
         model.ifPresent(m -> createModel(modeledEntity, m));
     }
 
-    /** Personal waystones must follow the Dummy viewer list, including every V5 material layer. */
+    /** Private waystones and first-bond orbs follow the Dummy viewer list. */
     @Override
     public boolean canSee(org.bukkit.entity.Player player, Object model) {
         if (!(model instanceof ActiveModel active)) return true;
         String name = active.getBlueprint().getName();
         if (!java.util.Set.of("ec_waystone_shell", "ec_waystone_light", "ec_waystone_heart",
-                "ec_waystone_shards", "ec_waystone_runes", "ec_waystone_shell_ia").contains(name)) return true;
+                "ec_waystone_shards", "ec_waystone_runes", "ec_waystone_shell_ia", "first_bond_orb").contains(name)) return true;
         ModeledEntity modeled = active.getModeledEntity();
         if (modeled == null || modeled.isDestroyed()) return false;
         if (!(modeled.getBase() instanceof com.ticxo.modelengine.api.entity.Dummy<?> dummy)) return false;

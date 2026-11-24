@@ -80,3 +80,8 @@ tasks.processResources {
         expand(props)
     }
 }
+
+// Compile the same wire codec into both artifacts without a runtime cross-plugin dependency.
+sourceSets.named("main") {
+    java.srcDir("../shared/src/main/java")
+}

@@ -117,13 +117,19 @@ public class RenderController {
             while (iterator.hasNext()) {
                 String s = iterator.next();
                 String o = s;
-                for (String r : NEED_REMOVE_WHEN_SORT) {
-                    s = s.replace(r, "");
-                }
+                s = stripSortPrefixes(s);
                 iterator.set(s);
                 originalId.put(s, o);
             }
             Collections.sort(sorted);
+
+            // Paper packs one bit per non-uv bone; uv_ binding bones must reuse their parent's bit.
+            Map<String, Integer> visibilityIndex = new HashMap<>();
+            for (String s : sorted) {
+                if (!originalId.get(s).startsWith("uv_")) {
+                    visibilityIndex.put(s, visibilityIndex.size());
+                }
+            }
 
             Set<String> uvAllBones = new HashSet<>();
             for (String uvBone : uvBonesId) {
@@ -161,8 +167,8 @@ public class RenderController {
                 }
                 if (!processedBones.contains(bone) && (uvParent || uvAllBones.contains(boneName) || uvBonesId.contains("*"))) {
                     int index = i;
-                    if (boneName.startsWith("uv_")) {
-                        index = sorted.indexOf(bone.getParent());
+                    if (boneName.startsWith("uv_") && bone.getParent() != null) {
+                        index = visibilityIndex.getOrDefault(stripSortPrefixes(bone.getParent()), i);
                     }
 
                     int n = (int) Math.pow(2, (index % 24));
@@ -185,6 +191,13 @@ public class RenderController {
         }
 
         return root.toString();
+    }
+
+    private static String stripSortPrefixes(String name) {
+        for (String r : NEED_REMOVE_WHEN_SORT) {
+            name = name.replace(r, "");
+        }
+        return name;
     }
 
 }

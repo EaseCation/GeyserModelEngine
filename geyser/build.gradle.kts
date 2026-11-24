@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "re.imc"
-version = "1.0.10"
+version = "1.0.11"
 
 repositories {
     mavenCentral()
@@ -33,6 +33,11 @@ dependencies {
     testRuntimeOnly("me.zimzaza4:geyserutils-geyser:1.0-SNAPSHOT")
 }
 
+// Match the root/Paper Java 21 toolchain; Lombok 1.18.32 cannot initialize on the host JDK 25.
+java {
+    toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+}
+
 tasks.test {
     useJUnitPlatform()
     inputs.property("gmeRuntimeData", providers.environmentVariable("GME_RUNTIME_DATA").orElse(""))
@@ -55,4 +60,9 @@ tasks.processResources {
     filesMatching("extension.yml") {
         expand(props)
     }
+}
+
+// Compile the same wire codec into both artifacts without a runtime cross-plugin dependency.
+sourceSets.named("main") {
+    java.srcDir("../shared/src/main/java")
 }
