@@ -1,12 +1,25 @@
 plugins {
     id("java")
     id("com.gradleup.shadow") version "9.4.0"
+    `maven-publish`
 }
 
-group = "re.imc"
-version = "1.0.13"
+group = "net.easecation.fork.imc"
+version = "1.0.8-ec.1" // upstream 1.0.8
 
 repositories {
+    // EaseCation private repository (Aliyun Yunxiao Packages), only for net.easecation.* coordinates:
+    // the NetEase Geyser/Floodgate forks and the GeyserUtils fork.
+    // Credentials: yunxiaoMavenUsername / yunxiaoMavenPassword in ~/.gradle/gradle.properties.
+    exclusiveContent {
+        forRepository {
+            maven("https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-release-h64s7e") {
+                name = "yunxiaoMaven"
+                credentials(PasswordCredentials::class)
+            }
+        }
+        filter { includeGroupByRegex("net\\.easecation(\\..*)?") }
+    }
     mavenCentral()
     maven("https://repo.papermc.io/repository/maven-public/")
     maven("https://central.sonatype.com/repository/maven-snapshots/")
@@ -27,8 +40,8 @@ dependencies {
     compileOnly("io.github.toxicity188:bettermodel-api:2.2.0")
     compileOnly("io.github.toxicity188:bettermodel-bukkit-api:2.2.0")
     
-    compileOnly("me.zimzaza4:geyserutils-spigot:1.0-SNAPSHOT")
-    compileOnly("org.geysermc.floodgate:api:2.2.4-SNAPSHOT")
+    compileOnly("net.easecation.fork.zimzaza4:geyserutils-spigot:1.0-ec.1")
+    compileOnly("net.easecation.fork.geysermc.floodgate:api:2.2.5-ec.2")
 
     compileOnly("org.projectlombok:lombok:1.18.32")
     annotationProcessor("org.projectlombok:lombok:1.18.32")
@@ -84,4 +97,32 @@ tasks.processResources {
 // Compile the same wire codec into both artifacts without a runtime cross-plugin dependency.
 sourceSets.named("main") {
     java.srcDir("../shared/src/main/java")
+}
+
+// Published for NeteaseModUIAPI (compileOnly). artifactId = project name "paper".
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            from(components["java"])
+            pom {
+                description.set("EaseCation fork of GeyserExtensionists GeyserModelEngine (Paper plugin)")
+                properties.set(mapOf("upstream.groupId" to "re.imc", "upstream.version" to "1.0.8",
+                    "upstream.commit" to "67f65481b8eaec919ad4f6adaf5050f79a7c1df5"))
+            }
+        }
+    }
+    repositories {
+        // EaseCation private repository (Aliyun Yunxiao Packages).
+        // Credentials: yunxiaoMavenUsername / yunxiaoMavenPassword in ~/.gradle/gradle.properties.
+        maven {
+            name = "yunxiaoMaven"
+            url = uri(
+                if (version.toString().endsWith("-SNAPSHOT"))
+                    "https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-snapshot-bjmmxv"
+                else
+                    "https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-release-h64s7e"
+            )
+            credentials(PasswordCredentials::class)
+        }
+    }
 }

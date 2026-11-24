@@ -2,7 +2,9 @@ plugins {
     id("java")
 }
 
-group = "re.imc"
+// EaseCation fork of GeyserExtensionists/GeyserModelEngine (upstream re.imc, merge-base 67f6548),
+// coordinates/versioning per GeyserWorkspace docs/maven-coordinates.md
+group = "net.easecation.fork.imc"
 version = "1.0.0"
 
 repositories {

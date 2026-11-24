@@ -3,10 +3,22 @@ plugins {
     id("com.gradleup.shadow") version "9.4.0"
 }
 
-group = "re.imc"
-version = "1.0.11"
+group = "net.easecation.fork.imc"
+version = "1.0.5-ec.1" // upstream 1.0.5
 
 repositories {
+    // EaseCation private repository (Aliyun Yunxiao Packages), only for net.easecation.* coordinates:
+    // the NetEase Geyser/Floodgate forks and the GeyserUtils fork.
+    // Credentials: yunxiaoMavenUsername / yunxiaoMavenPassword in ~/.gradle/gradle.properties.
+    exclusiveContent {
+        forRepository {
+            maven("https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-release-h64s7e") {
+                name = "yunxiaoMaven"
+                credentials(PasswordCredentials::class)
+            }
+        }
+        filter { includeGroupByRegex("net\\.easecation(\\..*)?") }
+    }
     mavenCentral()
 
     maven("https://repo.opencollab.dev/main/")
@@ -15,9 +27,9 @@ repositories {
 }
 
 dependencies {
-    compileOnly("org.geysermc.geyser:api:2.9.2-SNAPSHOT")
+    compileOnly("net.easecation.fork.geysermc.geyser:api:2.9.2-ec.2")
 
-    compileOnly("me.zimzaza4:geyserutils-geyser:1.0-SNAPSHOT")
+    compileOnly("net.easecation.fork.zimzaza4:geyserutils-geyser:1.0-ec.1")
 
     compileOnly("org.projectlombok:lombok:1.18.32")
     annotationProcessor("org.projectlombok:lombok:1.18.32")
@@ -27,10 +39,10 @@ dependencies {
     implementation("de.tomalbrc:blockbench-import-library:1.7.0+1.21.9")
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
-    testImplementation("org.geysermc.geyser:api:2.9.2-SNAPSHOT")
+    testImplementation("net.easecation.fork.geysermc.geyser:api:2.9.2-ec.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
-    testRuntimeOnly("org.geysermc.geyser:core:2.9.2-SNAPSHOT")
-    testRuntimeOnly("me.zimzaza4:geyserutils-geyser:1.0-SNAPSHOT")
+    testRuntimeOnly("net.easecation.fork.geysermc.geyser:core:2.9.2-ec.2")
+    testRuntimeOnly("net.easecation.fork.zimzaza4:geyserutils-geyser:1.0-ec.1")
 }
 
 // Match the root/Paper Java 21 toolchain; Lombok 1.18.32 cannot initialize on the host JDK 25.
