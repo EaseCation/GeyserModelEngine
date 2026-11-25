@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "net.easecation.fork.imc"
-version = "1.0.8-ec.1" // upstream 1.0.8
+version = "1.0.13"
 
 repositories {
     // EaseCation private repository (Aliyun Yunxiao Packages), only for net.easecation.* coordinates:
@@ -100,9 +100,13 @@ sourceSets.named("main") {
 }
 
 // Published for NeteaseModUIAPI (compileOnly). artifactId = project name "paper".
+// Runtime version (plugin.yml, jar name) stays as deployed on the servers; the EaseCation repository gets this release.
+val publishVersion = "1.0.8-ec.1"
+
 publishing {
     publications {
         create<MavenPublication>("maven") {
+            version = publishVersion
             from(components["java"])
             pom {
                 description.set("EaseCation fork of GeyserExtensionists GeyserModelEngine (Paper plugin)")
@@ -117,7 +121,7 @@ publishing {
         maven {
             name = "yunxiaoMaven"
             url = uri(
-                if (version.toString().endsWith("-SNAPSHOT"))
+                if (publishVersion.endsWith("-SNAPSHOT"))
                     "https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-snapshot-bjmmxv"
                 else
                     "https://easecation-cn-hangzhou.devops.aliyuncs.com/packages/api/protocol/maven/14075-release-h64s7e"
